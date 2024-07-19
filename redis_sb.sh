@@ -5,6 +5,9 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# 获取本机IP地址
+IP_ADDRESS=$(hostname -I | awk '{print $1}')
+
 # 进度函数
 progress() {
     local percent=$1
@@ -53,8 +56,8 @@ mkdir -p s1 s2 s3
 progress 70 "正在创建Sentinel配置文件..."
 cat > s1/sentinel.conf <<EOF
 port 27001
-sentinel announce-ip 192.168.206.129
-sentinel monitor mymaster 192.168.206.129 7001 2
+sentinel announce-ip $IP_ADDRESS
+sentinel monitor mymaster $IP_ADDRESS 7001 2
 sentinel down-after-milliseconds mymaster 5000
 sentinel failover-timeout mymaster 60000
 dir "/tmp/s1"
