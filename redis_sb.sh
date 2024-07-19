@@ -1,148 +1,85 @@
 #!/bin/bash
 
-# 彩色输出的函数定义
-function echo_color() {
-    local color=$1
-    local message=$2
-    echo -e "\033[${color}m${message}\033[0m"
+# 颜色定义
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# 进度函数
+progress() {
+    local percent=$1
+    local description=$2
+    printf "${YELLOW}[%-50s] %d%%${NC}\n" $(printf "#%.0s" $(seq 1 $((percent/2)))) $percent
+    echo -e "${GREEN}$description${NC}"
 }
 
-# 打印进度的函数定义
-function print_progress() {
-    local step=$1
-    local total=$2
-    local progress=$((step * 100 / total))
-    echo_color "32" "步骤 $step/$total 完成 - ${progress}%"
-}
+# 第一部分: Redis单机安装
 
-# 获取本机IP地址
-REDIS_IP=$(hostname -I | awk '{print $1}')
+progress 5 "开始Redis单机安装..."
 
-# Redis相关设置
-REDIS_VERSION="6.2.4"
-REDIS_TAR="redis-${REDIS_VERSION}.tar.gz"
-REDIS_URL="https://dlink.host/1drv/aHR0cHM6Ly8xZHJ2Lm1zL3UvcyFBZ1NYRUpYME43RzliMTV6M2ItTlFza3RCdE0_ZT1RdXZjSGI.tar.gz"
+# 下载Redis
+progress 10 "正在下载Redis..."
+wget -O redis-6.2.4.tar.gz "https://dlink.host/1drv/aHR0cHM6Ly8xZHJ2Lm1zL3UvcyFBZ1NYRUpYME43RzliMTV6M2ItTlFza3RCdE0_ZT1RdXZjSGI.tar.gz"
 
-# Sentinel相关设置
-SENTINEL_PORTS=("27001" "27002" "27003")
-SENTINEL_DIRS=("s1" "s2" "s3")
-SENTINEL_CONFIG_TEMPLATE="sentinel.conf"
+# 解压Redis
+progress 20 "正在解压Redis..."
+tar -xvf redis-6.2.4.tar.gz
 
-# 步骤1: 下载Redis安装包
-echo_color "34" "步骤 1/9: 下载Redis安装包"
-wget -O ${REDIS_TAR} ${REDIS_URL}
-if [ $? -ne 0 ]; then
-    echo_color "31" "下载Redis安装包失败！"
-    exit 1
-fi
-
-print_progress 1 9
-
-# 步骤2: 解压缩Redis安装包
-echo_color "34" "步骤 2/9: 解压缩Redis安装包"
-tar -xvf ${REDIS_TAR}
-if [ $? -ne 0 ]; then
-    echo_color "31" "解压Redis安装包失败！"
-    exit 1
-fi
-
-# 检查解压后的目录名是否符合预期
-if [ ! -d "redis-${REDIS_VERSION}" ]; then
-    echo_color "31" "解压后的目录名不符合预期！"
-    exit 1
-fi
-
-print_progress 2 9
-
-# 步骤3: 编译Redis
-echo_color "34" "步骤 3/9: 编译Redis"
-cd redis-${REDIS_VERSION}
+# 编译安装Redis
+progress 30 "正在编译安装Redis..."
+cd redis-6.2.4
 make && make install
-if [ $? -ne 0 ]; then
-    echo_color "31" "编译Redis失败！"
-    exit 1
-fi
 
-# 返回到脚本所在目录
-cd ..
+# 修改配置文件
+progress 40 "正在修改配置文件..."
+sed -i 's/bind 127.0.0.1/bind 0.0.0.0/' redis.conf
+sed -i 's/databases 16/databases 1/' redis.conf
 
-print_progress 3 9
+# 启动Redis
+progress 50 "正在启动Redis..."
+redis-server redis.conf &
 
-# 步骤4: 配置Redis
-echo_color "34" "步骤 4/9: 配置Redis"
-REDIS_CONF="redis.conf"
-cp redis-${REDIS_VERSION}/redis.conf ${REDIS_CONF}.bak
+progress 55 "Redis单机安装完成!"
 
-# 修改redis.conf配置
-sed -i 's/^bind 127.0.0.1/bind 0.0.0.0/' ${REDIS_CONF}
-sed -i 's/^databases 16/databases 1/' ${REDIS_CONF}
+# 第二部分: Sentinel集群搭建
 
-# 检查redis.conf是否成功修改
-grep -q 'bind 0.0.0.0' ${REDIS_CONF}
-if [ $? -ne 0 ]; then
-    echo_color "31" "修改redis.conf配置失败！"
-    exit 1
-fi
+progress 60 "开始Sentinel集群搭建..."
 
-print_progress 4 9
+# 创建目录
+cd /tmp
+mkdir -p s1 s2 s3
 
-# 步骤5: 启动Redis
-echo_color "34" "步骤 5/9: 启动Redis"
-redis-server ${REDIS_CONF} &
-if [ $? -ne 0 ]; then
-    echo_color "31" "启动Redis失败！"
-    exit 1
-fi
-
-# 等待Redis启动
-sleep 5
-
-print_progress 5 9
-
-# 步骤6: 创建Sentinel目录
-echo_color "34" "步骤 6/9: 创建Sentinel目录"
-SENTINEL_BASE_DIR="/etc/redis/sentinel"
-mkdir -p ${SENTINEL_BASE_DIR}
-for dir in "${SENTINEL_DIRS[@]}"; do
-    mkdir -p ${SENTINEL_BASE_DIR}/${dir}
-done
-
-print_progress 6 9
-
-# 步骤7: 创建Sentinel配置文件
-echo_color "34" "步骤 7/9: 创建Sentinel配置文件"
-cat <<EOL > ${SENTINEL_BASE_DIR}/${SENTINEL_DIRS[0]}/${SENTINEL_CONFIG_TEMPLATE}
-port ${SENTINEL_PORTS[0]}
-sentinel announce-ip ${REDIS_IP}
-sentinel monitor mymaster ${REDIS_IP} 7001 2
+# 创建配置文件
+progress 70 "正在创建Sentinel配置文件..."
+cat > s1/sentinel.conf <<EOF
+port 27001
+sentinel announce-ip 192.168.206.129
+sentinel monitor mymaster 192.168.206.129 7001 2
 sentinel down-after-milliseconds mymaster 5000
 sentinel failover-timeout mymaster 60000
-dir "${SENTINEL_BASE_DIR}/${SENTINEL_DIRS[0]}"
-EOL
+dir "/tmp/s1"
+EOF
 
-# 拷贝配置文件到其他目录并修改端口
-for i in {1..2}; do
-    cp ${SENTINEL_BASE_DIR}/${SENTINEL_DIRS[0]}/${SENTINEL_CONFIG_TEMPLATE} ${SENTINEL_BASE_DIR}/${SENTINEL_DIRS[$i]}/
-    sed -i -e "s/${SENTINEL_PORTS[0]}/${SENTINEL_PORTS[$i]}/g" -e "s|${SENTINEL_BASE_DIR}/${SENTINEL_DIRS[0]}|${SENTINEL_BASE_DIR}/${SENTINEL_DIRS[$i]}|g" ${SENTINEL_BASE_DIR}/${SENTINEL_DIRS[$i]}/${SENTINEL_CONFIG_TEMPLATE}
-done
+# 复制配置文件
+progress 80 "正在复制Sentinel配置文件..."
+cp s1/sentinel.conf s2
+cp s1/sentinel.conf s3
 
-print_progress 7 9
+# 修改配置文件
+progress 90 "正在修改Sentinel配置文件..."
+sed -i -e 's/27001/27002/g' -e 's/s1/s2/g' s2/sentinel.conf
+sed -i -e 's/27001/27003/g' -e 's/s1/s3/g' s3/sentinel.conf
 
-# 步骤8: 启动Sentinel实例
-echo_color "34" "步骤 8/9: 启动Sentinel实例"
-for i in "${!SENTINEL_PORTS[@]}"; do
-    port=${SENTINEL_PORTS[$i]}
-    dir=${SENTINEL_DIRS[$i]}
-    echo_color "33" "启动Sentinel实例 ${port}..."
-    redis-sentinel ${SENTINEL_BASE_DIR}/${dir}/${SENTINEL_CONFIG_TEMPLATE} &
-done
+# 启动sentinel
+progress 95 "Sentinel集群准备就绪..."
+echo "启动Sentinel的命令:"
+echo "redis-sentinel /tmp/s1/sentinel.conf"
+echo "redis-sentinel /tmp/s2/sentinel.conf"
+echo "redis-sentinel /tmp/s3/sentinel.conf"
 
-# 等待Sentinel启动
-sleep 5
+progress 100 "安装和配置完成!"
 
-print_progress 8 9
-
-# 步骤9: 完成
-echo_color "32" "步骤 9/9: 所有步骤完成！"
-echo_color "32" "Redis和Sentinel集群已经启动并运行。请检查日志确认配置。"
-print_progress 9 9
+echo "Redis已成功安装并启动。"
+echo "Sentinel集群配置已完成。"
+echo "要停止Redis，请运行: redis-cli shutdown"
+echo "请在不同的终端窗口中运行上述Sentinel启动命令来启动Sentinel集群。"
